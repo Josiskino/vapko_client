@@ -1,25 +1,54 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart'; 
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../utils/api_exception.dart';
+
+enum HttpMethod { get, post, put, delete }
 
 class DioClient {
   final Dio dio;
   String? _authToken;
 
   DioClient({required this.dio}) {
-    _loadTokenFromStorage(); 
+    _loadTokenFromStorage();
+  }
+
+  Future<void> _loadTokenFromStorage() async {
+    final prefs = await SharedPreferences.getInstance();
+    _authToken = prefs.getString('authToken');
+  }
+
+  Future<void> _saveTokenToStorage(String token) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('authToken', token);
+  }
+
+  Future<void> clearAuthToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('authToken');
+    _authToken = null;
+  }
+
+  void setAuthToken(String token) {
+    _authToken = token;
+    _saveTokenToStorage(token);
+  }
+
+  Options _requestOptions() {
+    return Options(
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': _authToken != null ? 'Bearer $_authToken' : '',
+      },
+    );
   }
 
   void _logRequest(String method, String path, [Map<String, dynamic>? body]) {
     debugPrint("===========API $method REQUEST===========");
     debugPrint("REQUEST URL: ${dio.options.baseUrl + path}");
-    if (body != null) {
-      debugPrint("REQUEST BODY: ${body.toString()}");
-    } else {
-      debugPrint("REQUEST BODY: No body");
-    }
+    debugPrint("REQUEST BODY: ${body?.toString() ?? 'No body'}");
   }
 
   void _logResponse(Response response) {
@@ -44,115 +73,42 @@ class DioClient {
     }
   }
 
-  // Charger le token depuis le stockage local
-  Future<void> _loadTokenFromStorage() async {
-    final prefs = await SharedPreferences.getInstance();
-    _authToken = prefs.getString('authToken');
-  }
-
-  // Stocker le token dans le stockage local
-  Future<void> _saveTokenToStorage(String token) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('authToken', token);
-  }
-
-  // Supprimer le token du stockage local
-  Future<void> clearAuthToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('authToken');
-    _authToken = null;
-  }
-
-  // Méthode pour définir un token d'authentification
-  void setAuthToken(String token) {
-    _authToken = token;
-    _saveTokenToStorage(token); 
-  }
-
-  Options _requestOptions() {
-    return Options(
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': _authToken != null ? 'Bearer $_authToken' : '',
-      },
-    );
-  }
-
-  Future<Response> getRequest({required String path}) async {
+  Future<Response> makeRequest({
+    required HttpMethod method,
+    required String path,
+    Map<String, dynamic>? data,
+  }) async {
     try {
-      _logRequest("GET", path);
-      final response = await dio.get(path, options: _requestOptions());
-      _logResponse(response);
-      return response;
-    } on DioException catch (e) {
-      _handleError(e);
-      rethrow;
-    }
-  }
+      // Log the request
+      _logRequest(method.toString().toUpperCase(), path, data);
 
-  Future<Response> postRequest(
-      {required String path, Map<String, dynamic>? data}) async {
-    try {
-      _logRequest("POST", path, data);
-      final response = await dio.post(
-        path,
-        data: data,
-        options: _requestOptions(),
-      );
+      Response response;
+      switch (method) {
+        case HttpMethod.get:
+          response = await dio.get(path, options: _requestOptions());
+          break;
+        case HttpMethod.post:
+          response = await dio.post(path, data: data, options: _requestOptions());
+          break;
+        case HttpMethod.put:
+          response = await dio.put(path, data: data, options: _requestOptions());
+          break;
+        case HttpMethod.delete:
+          response = await dio.delete(path, options: _requestOptions());
+          break;
+      }
+
+      // Log the response
       _logResponse(response);
 
       // Gestion du token après connexion
-      if (path.contains('/login')) { 
+      if (method == HttpMethod.post && path.contains('/login')) {
         final token = response.data["token"];
         if (token != null) {
-          setAuthToken(token); 
+          setAuthToken(token);
         }
       }
 
-      return response;
-    } on DioException catch (e) {
-      _handleError(e);
-      rethrow;
-    }
-  }
-
-  Future<Response> putRequest(
-      {required String path, Map<String, dynamic>? data}) async {
-    try {
-      _logRequest("PUT", path, data);
-      final response =
-          await dio.put(path, data: data, options: _requestOptions());
-      _logResponse(response);
-      return response;
-    } on DioException catch (e) {
-      _handleError(e);
-      rethrow;
-    }
-  }
-
-  Future<Response> deleteRequest({required String path}) async {
-    try {
-      _logRequest("DELETE", path);
-      final response = await dio.delete(path, options: _requestOptions());
-      _logResponse(response);
-      return response;
-    } on DioException catch (e) {
-      _handleError(e);
-      rethrow;
-    }
-  }
-
-  Future<Response> uploadImage(
-      {required String path, required String filePath}) async {
-    try {
-      final formData = FormData.fromMap({
-        'file': await MultipartFile.fromFile(filePath),
-      });
-
-      _logRequest("POST", path);
-      final response =
-          await dio.post(path, data: formData, options: _requestOptions());
-      _logResponse(response);
       return response;
     } on DioException catch (e) {
       _handleError(e);
